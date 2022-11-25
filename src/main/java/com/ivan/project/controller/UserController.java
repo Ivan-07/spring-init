@@ -13,8 +13,11 @@ import com.ivan.project.model.dto.user.*;
 import com.ivan.project.model.entity.User;
 import com.ivan.project.model.vo.UserVO;
 import com.ivan.project.service.UserService;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -29,10 +32,14 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/user")
+@Slf4j
 public class UserController {
 
     @Resource
     private UserService userService;
+
+    @Resource
+    private RedisTemplate redisTemplate;
 
     // region 登录相关
 
@@ -197,17 +204,29 @@ public class UserController {
     @GetMapping("/list")
     @AuthCheck(mustRole = "admin")
     public BaseResponse<List<UserVO>> listUser(UserQueryRequest userQueryRequest, HttpServletRequest request) {
+        String redisKey = "ivan:user:list";
+        ValueOperations valueOperations = redisTemplate.opsForValue();
+        List<UserVO> userVOList = (List<UserVO>) valueOperations.get(redisKey);
+        if (userVOList != null) {
+            return ResultUtils.success(userVOList);
+        }
         User userQuery = new User();
         if (userQueryRequest != null) {
             BeanUtils.copyProperties(userQueryRequest, userQuery);
         }
         QueryWrapper<User> queryWrapper = new QueryWrapper<>(userQuery);
         List<User> userList = userService.list(queryWrapper);
-        List<UserVO> userVOList = userList.stream().map(user -> {
+        userVOList = userList.stream().map(user -> {
             UserVO userVO = new UserVO();
             BeanUtils.copyProperties(user, userVO);
             return userVO;
         }).collect(Collectors.toList());
+        // 写缓存
+        try {
+            valueOperations.set(redisKey, userVOList);
+        } catch (Exception e) {
+            log.error("redis set key error", e);
+        }
         return ResultUtils.success(userVOList);
     }
 
@@ -223,6 +242,12 @@ public class UserController {
     public BaseResponse<Page<UserVO>> listUserByPage(UserQueryRequest userQueryRequest, HttpServletRequest request) {
         long current = 1;
         long size = 10;
+        String redisKey = "ivan:user:page_"+current+"_size_"+size;
+        ValueOperations valueOperations = redisTemplate.opsForValue();
+        Page<UserVO> userVOPage = (Page<UserVO>) valueOperations.get(redisKey);
+        if (userVOPage != null) {
+            return ResultUtils.success(userVOPage);
+        }
         User userQuery = new User();
         if (userQueryRequest != null) {
             BeanUtils.copyProperties(userQueryRequest, userQuery);
@@ -231,13 +256,19 @@ public class UserController {
         }
         QueryWrapper<User> queryWrapper = new QueryWrapper<>(userQuery);
         Page<User> userPage = userService.page(new Page<>(current, size), queryWrapper);
-        Page<UserVO> userVOPage = new PageDTO<>(userPage.getCurrent(), userPage.getSize(), userPage.getTotal());
+        userVOPage = new PageDTO<>(userPage.getCurrent(), userPage.getSize(), userPage.getTotal());
         List<UserVO> userVOList = userPage.getRecords().stream().map(user -> {
             UserVO userVO = new UserVO();
             BeanUtils.copyProperties(user, userVO);
             return userVO;
         }).collect(Collectors.toList());
         userVOPage.setRecords(userVOList);
+        // 写缓存
+        try {
+            valueOperations.set(redisKey, userVOPage);
+        } catch (Exception e) {
+            log.error("redis set key error", e);
+        }
         return ResultUtils.success(userVOPage);
     }
 
