@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
  *
  * @author ivan
  */
-@Aspect
+@Aspect //标注增强处理类（切面类）
 @Component
 public class AuthInterceptor {
 
